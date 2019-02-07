@@ -7,6 +7,7 @@
   - [Managing persistent volumes](#managing-persistent-volumes)
     - [Change reclaim policy for application volumes](#change-reclaim-policy-for-application-volumes)
     - [Delete persistent volumes](#delete-persistent-volumes)
+  - [Upgrading](#upgrading)
   - [Troubleshooting](#troubleshooting)
 
 Terraform configuration for deploying GitLab in a Kubernetes cluster
@@ -112,6 +113,14 @@ in [us-central1-a]
 Do you want to continue (Y/n)?  y
 
 Deleted [https://www.googleapis.com/compute/v1/projects/mtm-default-1/zones/us-central1-a/disks/gke-dev-a3f54e52-dynam-pvc-e41dcd6c-179a-11e9-ad5f-42010a80029a].
+```
+
+## Upgrading
+
+To upgrade GitLab installation to the latest version, restart all GitLab pods using:
+
+```shell
+kubectl delete --all pods -n gitlab
 ```
 
 ## Troubleshooting

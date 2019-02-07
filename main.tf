@@ -2,52 +2,53 @@
  * Input variables.
  */
 
+variable "aws_access_key" {
+  description = "AWS access key"
+  type        = "string"
+}
+
+variable "aws_secret_key" {
+  description = "AWS secret key"
+  type        = "string"
+}
+
 variable "domain_name" {
   description = "Root domain name"
   type        = "string"
 }
 
-variable "gcs_access_key" {
-  description = "GCS access key"
-  type        = "string"
-}
-
-variable "gcs_secret_key" {
-  description = "GCS secret key"
-  type        = "string"
-}
-
-variable "google_application_credentials" {
-  description = "Path to GCE JSON key file (used in k8s secrets for accessing GCE resources). Normally equals to GOOGLE_APPLICATION_CREDENTIALS env var value."
-  type        = "string"
-}
-
-variable "google_project_id" {
-  description = "GCE project ID"
-  type        = "string"
-}
-
-variable "location" {
-  description = "Location to create resources in"
-  default     = "US"
-  type        = "string"
-}
-
 variable "region" {
-  default     = "us-central1"
+  default     = "us-east-1"
   description = "Region to create resources in"
   type        = "string"
+}
+
+variable "smtp_password" {
+  default     = ""
+  description = "SMTP password"
+  type        = "string"
+}
+
+variable "smtp_settings" {
+  description = "GitLab SMTP settings"
+  type        = "string"
+}
+
+/*
+ * Local definitions.
+ */
+
+locals {
+  prefix = "${replace(var.domain_name, ".", "-")}"
 }
 
 /*
  * Terraform providers.
  */
 
-provider "google" {
-  version = "~> 1.20"
-
-  project = "${var.google_project_id}"
+provider "aws" {
   region  = "${var.region}"
+  version = "~> 1.57"
 }
 
 provider "helm" {
@@ -58,16 +59,12 @@ provider "kubernetes" {
   version = "~> 1.5"
 }
 
-provider "random" {
-  version = "~> 2.0"
-}
-
 /*
  * GCS remote storage for storing Terraform state.
  */
 
 terraform {
-  backend "gcs" {}
+  backend "s3" {}
 }
 
 /*
@@ -80,10 +77,9 @@ resource "kubernetes_namespace" "gitlab" {
   }
 }
 
-# GCS resources.
-resource "google_storage_bucket" "gitlab_registry" {
-  location = "${var.location}"
-  name     = "${var.google_project_id}-gitlab-registry"
+# S3 bucket resources.
+resource "aws_s3_bucket" "gitlab_registry" {
+  bucket = "${local.prefix}-gitlab-registry"
 }
 
 resource "kubernetes_secret" "gitlab_registry_storage" {
@@ -94,43 +90,61 @@ resource "kubernetes_secret" "gitlab_registry_storage" {
 
   data {
     registryStorage = <<EOF
-gcs:
-  bucket: ${google_storage_bucket.gitlab_registry.name}
-  keyfile: /etc/docker/registry/storage/gcs.json
+s3:
+  bucket: ${aws_s3_bucket.gitlab_registry.bucket}
+  accesskey: ${var.aws_access_key}
+  secretkey: ${var.aws_secret_key}
+  region: ${var.region}
+  v4auth: true
 EOF
-
-    gcs.json = "${file("${var.google_application_credentials}")}"
   }
 }
 
-resource "google_storage_bucket" "gitlab_lfs" {
-  location = "${var.location}"
-  name     = "${var.google_project_id}-gitlab-lfs"
+resource "kubernetes_secret" "gitlab_runner_cache_secret" {
+  metadata {
+    name      = "gitlab-runner-cache-secret"
+    namespace = "${kubernetes_namespace.gitlab.metadata.0.name}"
+  }
+
+  data {
+    accesskey = "${var.aws_access_key}"
+    secretkey = "${var.aws_secret_key}"
+  }
 }
 
-resource "google_storage_bucket" "gitlab_artifacts" {
-  location = "${var.location}"
-  name     = "${var.google_project_id}-gitlab-artifacts"
+resource "kubernetes_secret" "gitlab_smtp_password" {
+  metadata {
+    name      = "gitlab-smtp-password"
+    namespace = "${kubernetes_namespace.gitlab.metadata.0.name}"
+  }
+
+  data {
+    password = "${var.smtp_password}"
+  }
 }
 
-resource "google_storage_bucket" "gitlab_uploads" {
-  location = "${var.location}"
-  name     = "${var.google_project_id}-gitlab-uploads"
+resource "aws_s3_bucket" "gitlab_lfs" {
+  bucket = "${local.prefix}-gitlab-lfs"
 }
 
-resource "google_storage_bucket" "gitlab_packages" {
-  location = "${var.location}"
-  name     = "${var.google_project_id}-gitlab-packages"
+resource "aws_s3_bucket" "gitlab_artifacts" {
+  bucket = "${local.prefix}-gitlab-artifacts"
 }
 
-resource "google_storage_bucket" "gitlab_pseudonymizer" {
-  location = "${var.location}"
-  name     = "${var.google_project_id}-gitlab-pseudonymizer"
+resource "aws_s3_bucket" "gitlab_uploads" {
+  bucket = "${local.prefix}-gitlab-uploads"
 }
 
-resource "google_storage_bucket" "gitlab_runner_cache" {
-  location = "${var.location}"
-  name     = "${var.google_project_id}-gitlab-runner-cache"
+resource "aws_s3_bucket" "gitlab_packages" {
+  bucket = "${local.prefix}-gitlab-packages"
+}
+
+resource "aws_s3_bucket" "gitlab_pseudonymizer" {
+  bucket = "${local.prefix}-gitlab-pseudonymizer"
+}
+
+resource "aws_s3_bucket" "gitlab_runner_cache" {
+  bucket = "${local.prefix}-gitlab-runner-cache"
 }
 
 resource "kubernetes_secret" "gitlab_storage" {
@@ -141,24 +155,20 @@ resource "kubernetes_secret" "gitlab_storage" {
 
   data {
     connection = <<EOF
-provider: Google
-google_project: ${var.google_project_id}
-google_client_email: terraform-sa@${var.google_project_id}.iam.gserviceaccount.com
-
-google_json_key_string: |
-  ${indent(2, file("${var.google_application_credentials}"))}
+provider: AWS
+region: ${var.region}
+aws_access_key_id: ${var.aws_access_key}
+aws_secret_access_key: ${var.aws_secret_key}
 EOF
   }
 }
 
-resource "google_storage_bucket" "gitlab_backups" {
-  location = "${var.location}"
-  name     = "${var.google_project_id}-gitlab-backups"
+resource "aws_s3_bucket" "gitlab_backups" {
+  bucket = "${local.prefix}-gitlab-backups"
 }
 
-resource "google_storage_bucket" "gitlab_tmp" {
-  location = "${var.location}"
-  name     = "${var.google_project_id}-gitlab-tmp"
+resource "aws_s3_bucket" "gitlab_tmp" {
+  bucket = "${local.prefix}-gitlab-tmp"
 }
 
 resource "kubernetes_secret" "gitlab_s3cfg" {
@@ -170,51 +180,11 @@ resource "kubernetes_secret" "gitlab_s3cfg" {
   data {
     config = <<EOF
 [default]
-host_base = minio.${var.domain_name}
-host_bucket = minio.${var.domain_name}
-bucket_location = us-central-1
-use_https = True
-
-access_key = ${random_string.minio_access_key.result}
-secret_key = ${random_string.minio_secret_key.result}
-
-signature_v2 = False
+access_key = ${var.aws_access_key}
+secret_key = ${var.aws_secret_key}
+bucket_location = ${var.region}
 EOF
   }
-}
-
-resource "random_string" "minio_access_key" {
-  length  = 16
-  special = false
-}
-
-resource "random_string" "minio_secret_key" {
-  length  = 32
-  special = true
-}
-
-resource "kubernetes_secret" "minio_secret" {
-  metadata {
-    name      = "minio-secret"
-    namespace = "${kubernetes_namespace.gitlab.metadata.0.name}"
-  }
-
-  data {
-    accesskey = "${random_string.minio_access_key.result}"
-    secretkey = "${random_string.minio_secret_key.result}"
-  }
-}
-
-# Minio module.
-module "minio" {
-  source = "modules/minio"
-
-  access_key                     = "${random_string.minio_access_key.result}"
-  domain_name                    = "minio.${var.domain_name}"
-  google_application_credentials = "${var.google_application_credentials}"
-  google_project_id              = "${var.google_project_id}"
-  namespace                      = "${kubernetes_namespace.gitlab.metadata.0.name}"
-  secret_key                     = "${random_string.minio_secret_key.result}"
 }
 
 # GitLab Helm repository.
@@ -236,6 +206,9 @@ resource "helm_release" "gitlab" {
   values = [<<EOF
 certmanager:
   install: false
+
+certmanager-issuer:
+  email: "admin@instacoins.com"
 
 gitaly:
   persistence:
@@ -262,8 +235,11 @@ gitlab:
           secret: ${kubernetes_secret.gitlab_s3cfg.metadata.0.name}
   unicorn:
     ingress:
+      annotations:
+        certmanager.k8s.io/cluster-issuer: letsencrypt
       tls:
         enabled: true
+        secretName: gitlab-unicorn-tls
     minReplicas: 1
     resources:
       limits:
@@ -293,68 +269,116 @@ gitlab-runner:
   runners:
     cache:
       cacheType: s3
-      s3BucketName: ${google_storage_bucket.gitlab_runner_cache.name}
-      s3ServerAddress: https://minio.${var.domain_name}
+      s3BucketName: ${aws_s3_bucket.gitlab_runner_cache.bucket}
       cacheShared: true
-      s3BucketLocation: minio
+      s3BucketLocation: ${var.region}
       s3CachePath: gitlab-runner
       s3CacheInsecure: false
-      secretName: ${kubernetes_secret.minio_secret.metadata.0.name}
+      secretName: ${kubernetes_secret.gitlab_runner_cache_secret.metadata.0.name}
     locked: false
+    namespace: ${kubernetes_namespace.gitlab.metadata.0.name}
     privileged: true
 
 global:
   appConfig:
     email:
-      from: "gitlab@maxtopmedia.com"
+      from: "gitlab@${var.domain_name}"
       display_name: GitLab
-      reply_to: "noreply@maxtopmedia.com"
+      reply_to: "noreply@${var.domain_name}"
       subject_suffix: ""
     enableUsagePing: false
     lfs:
-      bucket: ${google_storage_bucket.gitlab_lfs.name}
+      bucket: ${aws_s3_bucket.gitlab_lfs.bucket}
       connection:
         secret: ${kubernetes_secret.gitlab_storage.metadata.0.name}
         key: connection
     artifacts:
-      bucket: ${google_storage_bucket.gitlab_artifacts.name}
+      bucket: ${aws_s3_bucket.gitlab_artifacts.bucket}
       connection:
         secret: ${kubernetes_secret.gitlab_storage.metadata.0.name}
         key: connection
     uploads:
-      bucket: ${google_storage_bucket.gitlab_uploads.name}
+      bucket: ${aws_s3_bucket.gitlab_uploads.bucket}
       connection:
         secret: ${kubernetes_secret.gitlab_storage.metadata.0.name}
         key: connection
     packages:
-      bucket: ${google_storage_bucket.gitlab_packages.name}
+      bucket: ${aws_s3_bucket.gitlab_packages.bucket}
       connection:
         secret: ${kubernetes_secret.gitlab_storage.metadata.0.name}
         key: connection
     backups:
-      bucket: ${google_storage_bucket.gitlab_backups.name}
-      tmpBucket: ${google_storage_bucket.gitlab_tmp.name}
+      bucket: ${aws_s3_bucket.gitlab_backups.bucket}
+      tmpBucket: ${aws_s3_bucket.gitlab_tmp.bucket}
     pseudonymizer:
-      bucket: ${google_storage_bucket.gitlab_pseudonymizer.name}
+      bucket: ${aws_s3_bucket.gitlab_pseudonymizer.bucket}
       connection:
         secret: ${kubernetes_secret.gitlab_storage.metadata.0.name}
         key: connection
   edition: ce
+  gitlabVersion: 11.7.5
   hosts:
     domain: ${var.domain_name}
+  imagePullPolicy: Always
   ingress:
-    class: "nginx"
-    configureCertmanager: false
+    configureCertmanager: true
     enabled: true
     tls:
       enabled: true
   minio:
     enabled: false
   registry:
-    bucket: ${google_storage_bucket.gitlab_registry.name}
+    bucket: ${aws_s3_bucket.gitlab_registry.bucket}
+  smtp:
+    ${indent(4, var.smtp_settings)}
+    password:
+      secret: ${kubernetes_secret.gitlab_smtp_password.metadata.0.name}
 
 nginx-ingress:
-  enabled: false
+  enabled: true
+  tcpExternalConfig: "true"
+  controller:
+    config:
+      hsts-include-subdomains: "false"
+      server-name-hash-bucket-size: "256"
+      enable-vts-status: "true"
+      use-http2: "false"
+      ssl-ciphers: "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES128-SHA:AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-SHA256:AES128-SHA256:AES256-SHA:AES128-SHA:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!RC4"
+      ssl-protocols: "TLSv1.1 TLSv1.2"
+      server-tokens: "false"
+    extraArgs:
+      force-namespace-isolation: ""
+    service:
+      externalTrafficPolicy: "Local"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 100Mi
+    publishService:
+      enabled: true
+    replicaCount: 3
+    minAvailable: 2
+    scope:
+      enabled: true
+    stats:
+      enabled: true
+    metrics:
+      enabled: true
+      service:
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "10254"
+  defaultBackend:
+    minAvailable: 1
+    replicaCount: 2
+    resources:
+      requests:
+        cpu: 5m
+        memory: 5Mi
+  rbac:
+    create: true
+  serviceAccount:
+    create: true
 
 postgresql:
   persistence:
@@ -374,13 +398,15 @@ redis:
 
 registry:
   ingress:
+    annotations:
+      certmanager.k8s.io/cluster-issuer: letsencrypt
     tls:
       enabled: true
+      secretName: gitlab-registry-tls
   minReplicas: 1
   storage:
     secret: ${kubernetes_secret.gitlab_registry_storage.metadata.0.name}
     key: registryStorage
-    extraKey: gcs.json
 EOF
   ]
 }
