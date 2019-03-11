@@ -2,6 +2,11 @@
  * Input variables.
  */
 
+variable "dns_zone_name" {
+  description = "The unique name of the zone hosted by Google Cloud DNS"
+  type        = "string"
+}
+
 variable "domain_name" {
   description = "Root domain name"
   type        = "string"
@@ -237,6 +242,9 @@ resource "helm_release" "gitlab" {
 certmanager:
   install: false
 
+certmanager-issuer:
+  email: "admin@${var.domain_name}"
+
 gitaly:
   persistence:
     matchLabels:
@@ -262,8 +270,11 @@ gitlab:
           secret: ${kubernetes_secret.gitlab_s3cfg.metadata.0.name}
   unicorn:
     ingress:
+      annotations:
+        certmanager.k8s.io/cluster-issuer: letsencrypt
       tls:
         enabled: true
+        secretName: gitlab-unicorn-tls
     minReplicas: 1
     resources:
       limits:
@@ -306,9 +317,9 @@ gitlab-runner:
 global:
   appConfig:
     email:
-      from: "gitlab@maxtopmedia.com"
+      from: "gitlab@${var.domain_name}"
       display_name: GitLab
-      reply_to: "noreply@maxtopmedia.com"
+      reply_to: "noreply@${var.domain_name}"
       subject_suffix: ""
     enableUsagePing: false
     lfs:
@@ -343,8 +354,7 @@ global:
   hosts:
     domain: ${var.domain_name}
   ingress:
-    class: "nginx"
-    configureCertmanager: false
+    configureCertmanager: true
     enabled: true
     tls:
       enabled: true
@@ -354,7 +364,50 @@ global:
     bucket: ${google_storage_bucket.gitlab_registry.name}
 
 nginx-ingress:
-  enabled: false
+  enabled: true
+  tcpExternalConfig: "true"
+  controller:
+    config:
+      hsts-include-subdomains: "false"
+      server-name-hash-bucket-size: "256"
+      enable-vts-status: "true"
+      use-http2: "false"
+      ssl-ciphers: "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES128-SHA:AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-SHA256:AES128-SHA256:AES256-SHA:AES128-SHA:!aNULL:!eNULL:!EXPORT:!DES:!MD5:!PSK:!RC4"
+      ssl-protocols: "TLSv1.1 TLSv1.2"
+      server-tokens: "false"
+    extraArgs:
+      force-namespace-isolation: ""
+    service:
+      externalTrafficPolicy: "Local"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 100Mi
+    publishService:
+      enabled: true
+    replicaCount: 3
+    minAvailable: 2
+    scope:
+      enabled: true
+    stats:
+      enabled: true
+    metrics:
+      enabled: true
+      service:
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "10254"
+  defaultBackend:
+    minAvailable: 1
+    replicaCount: 2
+    resources:
+      requests:
+        cpu: 5m
+        memory: 5Mi
+  rbac:
+    create: true
+  serviceAccount:
+    create: true
 
 postgresql:
   persistence:
@@ -374,8 +427,11 @@ redis:
 
 registry:
   ingress:
+    annotations:
+      certmanager.k8s.io/cluster-issuer: letsencrypt
     tls:
       enabled: true
+      secretName: gitlab-registry-tls
   minReplicas: 1
   storage:
     secret: ${kubernetes_secret.gitlab_registry_storage.metadata.0.name}
@@ -383,4 +439,47 @@ registry:
     extraKey: gcs.json
 EOF
   ]
+}
+
+# Data source for gitlab-nginx-ingress-controller.
+data "kubernetes_service" "nginx_ingress_controller" {
+  depends_on = ["helm_release.gitlab"]
+
+  metadata {
+    name      = "${helm_release.gitlab.metadata.0.name}-nginx-ingress-controller"
+    namespace = "${helm_release.gitlab.metadata.0.namespace}"
+  }
+}
+
+# DNS zone managed by Google Cloud DNS.
+data "google_dns_managed_zone" "default" {
+  name = "${var.dns_zone_name}"
+}
+
+# A records.
+resource "google_dns_record_set" "gitlab_a_record" {
+  name         = "gitlab.${var.domain_name}."
+  managed_zone = "${data.google_dns_managed_zone.default.name}"
+  type         = "A"
+  ttl          = 300
+
+  rrdatas = ["${data.kubernetes_service.nginx_ingress_controller.load_balancer_ingress.0.ip}"]
+}
+
+resource "google_dns_record_set" "registry_a_record" {
+  name         = "registry.${var.domain_name}."
+  managed_zone = "${data.google_dns_managed_zone.default.name}"
+  type         = "A"
+  ttl          = 300
+
+  rrdatas = ["${data.kubernetes_service.nginx_ingress_controller.load_balancer_ingress.0.ip}"]
+}
+
+/*
+ * Outputs.
+ */
+
+output "load_balancer_ip" {
+  description = "IP address of the load balancer"
+  value = "${data.kubernetes_service.nginx_ingress_controller.load_balancer_ingress.0.ip}"
 }
