@@ -48,19 +48,19 @@ locals {
 
 provider "aws" {
   region  = "${var.region}"
-  version = "~> 1.57"
+  version = "~> 2.8"
 }
 
 provider "helm" {
-  version = "~> 0.7"
+  version = "~> 0.9"
 }
 
 provider "kubernetes" {
-  version = "~> 1.5"
+  version = "~> 1.6"
 }
 
 /*
- * GCS remote storage for storing Terraform state.
+ * S3 remote storage for storing Terraform state.
  */
 
 terraform {
@@ -261,7 +261,6 @@ gitlab-runner:
     memoryLimit: 786Mi
     cpuRequests: 150m
     memoryRequests: 256Mi
-  image: gitlab/gitlab-runner:alpine-bleeding
   install: true
   rbac:
     create: true
@@ -278,6 +277,7 @@ gitlab-runner:
     locked: false
     namespace: ${kubernetes_namespace.gitlab.metadata.0.name}
     privileged: true
+    tags: "dynamic"
 
 global:
   appConfig:
@@ -316,7 +316,7 @@ global:
         secret: ${kubernetes_secret.gitlab_storage.metadata.0.name}
         key: connection
   edition: ce
-  gitlabVersion: 11.7.5
+  gitlabVersion: master
   hosts:
     domain: ${var.domain_name}
   imagePullPolicy: Always
