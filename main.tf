@@ -44,27 +44,46 @@ variable "region" {
   type        = "string"
 }
 
+variable "smtp_password" {
+  default     = ""
+  description = "SMTP password"
+  type        = "string"
+}
+
+variable "smtp_settings" {
+  description = "GitLab SMTP settings"
+  type        = "string"
+}
+
+/*
+ * Local definitions.
+ */
+
+locals {
+  prefix = "${replace(var.domain_name, ".", "-")}"
+}
+
 /*
  * Terraform providers.
  */
 
 provider "google" {
-  version = "~> 1.20"
+  version = "~> 2.5"
 
   project = "${var.google_project_id}"
   region  = "${var.region}"
 }
 
 provider "helm" {
-  version = "~> 0.7"
+  version = "~> 0.9"
 }
 
 provider "kubernetes" {
-  version = "~> 1.5"
+  version = "~> 1.6"
 }
 
 provider "random" {
-  version = "~> 2.0"
+  version = "~> 2.1"
 }
 
 /*
@@ -105,6 +124,17 @@ gcs:
 EOF
 
     gcs.json = "${file("${var.google_application_credentials}")}"
+  }
+}
+
+resource "kubernetes_secret" "gitlab_smtp_password" {
+  metadata {
+    name      = "gitlab-smtp-password"
+    namespace = "${kubernetes_namespace.gitlab.metadata.0.name}"
+  }
+
+  data {
+    password = "${var.smtp_password}"
   }
 }
 
@@ -296,7 +326,6 @@ gitlab-runner:
     memoryLimit: 786Mi
     cpuRequests: 150m
     memoryRequests: 256Mi
-  image: gitlab/gitlab-runner:alpine-bleeding
   install: true
   rbac:
     create: true
@@ -313,6 +342,7 @@ gitlab-runner:
       secretName: ${kubernetes_secret.minio_secret.metadata.0.name}
     locked: false
     privileged: true
+    tags: "dynamic"
 
 global:
   appConfig:
@@ -351,8 +381,10 @@ global:
         secret: ${kubernetes_secret.gitlab_storage.metadata.0.name}
         key: connection
   edition: ce
+  gitlabVersion: master
   hosts:
     domain: ${var.domain_name}
+  imagePullPolicy: Always
   ingress:
     configureCertmanager: true
     enabled: true
@@ -362,6 +394,10 @@ global:
     enabled: false
   registry:
     bucket: ${google_storage_bucket.gitlab_registry.name}
+  smtp:
+    ${indent(4, var.smtp_settings)}
+    password:
+      secret: ${kubernetes_secret.gitlab_smtp_password.metadata.0.name}
 
 nginx-ingress:
   enabled: true
