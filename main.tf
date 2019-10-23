@@ -48,15 +48,15 @@ locals {
 
 provider "aws" {
   region  = "${var.region}"
-  version = "~> 2.8"
+  version = "~> 2.17"
 }
 
 provider "helm" {
-  version = "~> 0.9"
+  version = "~> 0.10"
 }
 
 provider "kubernetes" {
-  version = "~> 1.6"
+  version = "~> 1.8"
 }
 
 /*
@@ -203,6 +203,7 @@ resource "helm_release" "gitlab" {
   recreate_pods = true
   reuse_values  = true
 
+  # Use 'helm search -l gitlab/gitlab' to find out all available versions of this chart (gitlabVersion value).
   values = [<<EOF
 certmanager:
   install: false
@@ -261,7 +262,7 @@ gitlab-runner:
     memoryLimit: 786Mi
     cpuRequests: 150m
     memoryRequests: 256Mi
-  install: true
+  install: false
   rbac:
     create: true
     clusterWideAccess: true
@@ -316,10 +317,10 @@ global:
         secret: ${kubernetes_secret.gitlab_storage.metadata.0.name}
         key: connection
   edition: ce
-  gitlabVersion: master
+  gitlabVersion: 12.0.2
   hosts:
     domain: ${var.domain_name}
-  imagePullPolicy: Always
+  imagePullPolicy: IfNotPresent
   ingress:
     configureCertmanager: true
     enabled: true
