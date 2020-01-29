@@ -1,0 +1,22 @@
+acme_email = "admin@example.com"
+
+aws_access_key = "key"
+
+aws_secret_key = "secret"
+
+domain_name = "example.com"
+
+region = "us-east-1"
+
+smtp_password = "secret"
+
+smtp_settings = <<EOF
+enabled: true
+address: "smtp.gmail.com"
+port: 587
+user_name: "user"
+domain: "example.com"
+authentication: "login"
+starttls_auto: true
+openssl_verify_mode: "none"
+EOF

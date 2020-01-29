@@ -2,36 +2,41 @@
  * Input variables.
  */
 
+variable "acme_email" {
+  description = "ACME e-mail address"
+  type        = string
+}
+
 variable "aws_access_key" {
   description = "AWS access key"
-  type        = "string"
+  type        = string
 }
 
 variable "aws_secret_key" {
   description = "AWS secret key"
-  type        = "string"
+  type        = string
 }
 
 variable "domain_name" {
   description = "Root domain name"
-  type        = "string"
+  type        = string
 }
 
 variable "region" {
   default     = "us-east-1"
   description = "Region to create resources in"
-  type        = "string"
+  type        = string
 }
 
 variable "smtp_password" {
   default     = ""
   description = "SMTP password"
-  type        = "string"
+  type        = string
 }
 
 variable "smtp_settings" {
   description = "GitLab SMTP settings"
-  type        = "string"
+  type        = string
 }
 
 /*
@@ -47,8 +52,8 @@ locals {
  */
 
 provider "aws" {
-  region  = "${var.region}"
-  version = "~> 2.17"
+  region  = var.region
+  version = "~> 2.46"
 }
 
 provider "helm" {
@@ -56,7 +61,7 @@ provider "helm" {
 }
 
 provider "kubernetes" {
-  version = "~> 1.8"
+  version = "~> 1.10"
 }
 
 /*
@@ -85,10 +90,10 @@ resource "aws_s3_bucket" "gitlab_registry" {
 resource "kubernetes_secret" "gitlab_registry_storage" {
   metadata {
     name      = "gitlab-registry-storage"
-    namespace = "${kubernetes_namespace.gitlab.metadata.0.name}"
+    namespace = kubernetes_namespace.gitlab.metadata.0.name
   }
 
-  data {
+  data = {
     registryStorage = <<EOF
 s3:
   bucket: ${aws_s3_bucket.gitlab_registry.bucket}
@@ -103,10 +108,10 @@ EOF
 resource "kubernetes_secret" "gitlab_runner_cache_secret" {
   metadata {
     name      = "gitlab-runner-cache-secret"
-    namespace = "${kubernetes_namespace.gitlab.metadata.0.name}"
+    namespace = kubernetes_namespace.gitlab.metadata.0.name
   }
 
-  data {
+  data = {
     accesskey = "${var.aws_access_key}"
     secretkey = "${var.aws_secret_key}"
   }
@@ -115,10 +120,10 @@ resource "kubernetes_secret" "gitlab_runner_cache_secret" {
 resource "kubernetes_secret" "gitlab_smtp_password" {
   metadata {
     name      = "gitlab-smtp-password"
-    namespace = "${kubernetes_namespace.gitlab.metadata.0.name}"
+    namespace = kubernetes_namespace.gitlab.metadata.0.name
   }
 
-  data {
+  data = {
     password = "${var.smtp_password}"
   }
 }
@@ -150,10 +155,10 @@ resource "aws_s3_bucket" "gitlab_runner_cache" {
 resource "kubernetes_secret" "gitlab_storage" {
   metadata {
     name      = "gitlab-storage"
-    namespace = "${kubernetes_namespace.gitlab.metadata.0.name}"
+    namespace = kubernetes_namespace.gitlab.metadata.0.name
   }
 
-  data {
+  data = {
     connection = <<EOF
 provider: AWS
 region: ${var.region}
@@ -174,10 +179,10 @@ resource "aws_s3_bucket" "gitlab_tmp" {
 resource "kubernetes_secret" "gitlab_s3cfg" {
   metadata {
     name      = "gitlab-s3cfg"
-    namespace = "${kubernetes_namespace.gitlab.metadata.0.name}"
+    namespace = kubernetes_namespace.gitlab.metadata.0.name
   }
 
-  data {
+  data = {
     config = <<EOF
 [default]
 access_key = ${var.aws_access_key}
@@ -188,7 +193,7 @@ EOF
 }
 
 # GitLab Helm repository.
-resource "helm_repository" "gitlab" {
+data "helm_repository" "gitlab" {
   name = "gitlab"
   url  = "https://charts.gitlab.io/"
 }
@@ -197,19 +202,23 @@ resource "helm_repository" "gitlab" {
 resource "helm_release" "gitlab" {
   chart         = "gitlab/gitlab"
   name          = "gitlab"
-  namespace     = "${kubernetes_namespace.gitlab.metadata.0.name}"
-  repository    = "${helm_repository.gitlab.metadata.0.name}"
+  namespace     = kubernetes_namespace.gitlab.metadata.0.name
+  repository    = data.helm_repository.gitlab.metadata.0.name
   force_update  = true
   recreate_pods = true
   reuse_values  = true
+  reuse         = true
+  timeout       = 1200
 
-  # Use 'helm search -l gitlab/gitlab' to find out all available versions of this chart (gitlabVersion value).
+  # Ref https://gitlab.com/gitlab-org/charts/gitlab/blob/master/Chart.yaml for the version information.
+  version = "2.6.6"
+
   values = [<<EOF
 certmanager:
   install: false
 
 certmanager-issuer:
-  email: "admin@instacoins.com"
+  email: "${var.acme_email}"
 
 gitaly:
   persistence:
@@ -236,8 +245,6 @@ gitlab:
           secret: ${kubernetes_secret.gitlab_s3cfg.metadata.0.name}
   unicorn:
     ingress:
-      annotations:
-        certmanager.k8s.io/cluster-issuer: letsencrypt
       tls:
         enabled: true
         secretName: gitlab-unicorn-tls
@@ -317,11 +324,13 @@ global:
         secret: ${kubernetes_secret.gitlab_storage.metadata.0.name}
         key: connection
   edition: ce
-  gitlabVersion: 12.0.2
   hosts:
     domain: ${var.domain_name}
   imagePullPolicy: IfNotPresent
   ingress:
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+      kubernetes.io/tls-acme: true
     configureCertmanager: true
     enabled: true
     tls:
@@ -398,13 +407,13 @@ redis:
       memory: 64Mi
 
 registry:
+  enabled: true
   ingress:
-    annotations:
-      certmanager.k8s.io/cluster-issuer: letsencrypt
     tls:
       enabled: true
       secretName: gitlab-registry-tls
-  minReplicas: 1
+  hpa:
+    minReplicas: 1
   storage:
     secret: ${kubernetes_secret.gitlab_registry_storage.metadata.0.name}
     key: registryStorage

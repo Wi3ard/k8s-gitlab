@@ -33,7 +33,7 @@ Specify those keys in `gcs_access_key` and `gcs_secret_key` input variables in `
 Next initialize Terraform with `init` command:
 
 ```shell
-terraform init -backend-config "bucket=$BUCKET_NAME" -backend-config "prefix=apps/gitlab" -backend-config "region=$REGION"
+terraform init -backend-config "bucket=$BUCKET_NAME" -backend-config "key=apps/gitlab" -backend-config "region=$REGION"
 ```
 
 - `$REGION` should be replaced with a region name.
