@@ -245,6 +245,8 @@ gitlab:
           secret: ${kubernetes_secret.gitlab_s3cfg.metadata.0.name}
   unicorn:
     ingress:
+      annotations:
+        cert-manager.io/cluster-issuer: gitlab-letsencrypt
       tls:
         enabled: true
         secretName: gitlab-unicorn-tls
@@ -329,9 +331,9 @@ global:
   imagePullPolicy: IfNotPresent
   ingress:
     annotations:
-      cert-manager.io/cluster-issuer: letsencrypt
+      cert-manager.io/cluster-issuer: gitlab-letsencrypt
       kubernetes.io/tls-acme: true
-    configureCertmanager: true
+    configureCertmanager: false
     enabled: true
     tls:
       enabled: true
@@ -409,6 +411,8 @@ redis:
 registry:
   enabled: true
   ingress:
+    annotations:
+      cert-manager.io/cluster-issuer: gitlab-letsencrypt
     tls:
       enabled: true
       secretName: gitlab-registry-tls
